@@ -315,6 +315,7 @@ class BarcodeAdmin(ImportExportModelAdmin):
         '''
 
         return HttpResponse(html)
+    
 
     
 
