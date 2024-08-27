@@ -3,7 +3,8 @@ from .models import (
     Country, 
     Governate, 
     Area, 
-    Building, 
+    Building,
+    Images, 
     Office, 
     AssetCount, 
     Asset,
@@ -248,22 +249,22 @@ admin.site.register(Category, CategoryAdmin)
 # Admin for Barcode model
 class BarcodeAdmin(ImportExportModelAdmin):
     resource_class = BarcodeResource
-    list_display = ('category', 'quantity','view_barcodes_button')
+    list_display = ('category', 'quantity', 'view_barcodes_button')
     ordering = ('id',)
     search_fields = ('category__name', 'quantity')
     raw_id_fields = ("category",)
-    actions = [export_as_excel,'print_barcodes']
-    
+    actions = [export_as_excel, 'print_barcodes']
+
     def get_readonly_fields(self, request, obj=None):
         if obj:  
-            return ('category', 'quantity', )
+            return ('category', 'quantity')
         return ()
-    
+
     def view_barcodes_button(self, obj):
         return format_html('<a class="button" href="{}">View Barcodes</a>',
                            reverse('admin:view_barcodes', args=[obj.pk]))
     view_barcodes_button.short_description = 'View Barcodes'
-    
+
     def get_urls(self):
         urls = super().get_urls()
         custom_urls = [
@@ -273,41 +274,34 @@ class BarcodeAdmin(ImportExportModelAdmin):
 
     def view_barcodes(self, request, barcode_id):
         barcode = Barcode.objects.get(id=barcode_id)
-        barcodes = barcode.generate_barcodes()
+        images = barcode.images_set.all()  # Retrieve related images
 
         # Create HTML response to display barcodes
         html = '''
         <html>
         <head>
             <style>
-                /* Hide all content in screen media */
-                @media screen {
-                    .print-only {
-                        display: block;
-                    }
-                }
-                /* Styles applied only during printing */
                 @media print {
                     body {
                         margin: 0;
                         padding: 0;
                     }
                     img {
-                        display: block;  /* Ensures each barcode is on a new line */
-                        width: auto;     /* Keeps the image width as it is */
-                        height: auto;    /* Keeps the image height as it is */
-                        margin: 0;       /* No additional margins */
-                        page-break-inside: avoid; /* Prevent breaking inside images */
+                        display: block;
+                        width: auto;
+                        height: auto;
+                        margin: 0;
+                        page-break-inside: avoid;
                     }
                 }
             </style>
         </head>
         <body>
             <div class="print-only">
-                '''
-        for code in barcodes:
-            image_path = os.path.join(settings.MEDIA_URL, 'barcodes', f'{code}.png')
-            html += f'<img src="{image_path}" alt="{code}" />'
+        '''
+        for image in images:
+            image_url = f'{settings.MEDIA_URL}{image.image_path}'
+            html += f'<img src="{image_url}" alt="{image.code}" />'
         html += '''
             </div>
         </body>
@@ -315,11 +309,13 @@ class BarcodeAdmin(ImportExportModelAdmin):
         '''
 
         return HttpResponse(html)
-    
 
-    
+class ImagesAdmin(admin.ModelAdmin):
+    list_display = ('barcode', 'image_path')  # Adjust based on actual fields
+    search_fields = ('barcode__category__name', 'image_path')
 
 admin.site.register(Barcode, BarcodeAdmin)
+admin.site.register(Images, ImagesAdmin)
 
 
 class ConfigurationAdmin(ImportExportModelAdmin):

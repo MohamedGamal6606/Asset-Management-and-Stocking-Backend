@@ -1,6 +1,7 @@
 from io import BytesIO
 import uuid
 from django.db import models
+from django.dispatch import receiver
 from django.forms import ValidationError
 from django.utils import timezone
 from barcode import Code128
@@ -8,7 +9,7 @@ from barcode.writer import ImageWriter
 from PIL import Image
 import os
 from django.conf import settings
-
+from django.db.models.signals import post_delete
 class Country(models.Model):
     
     name = models.CharField(max_length=255)
@@ -91,10 +92,7 @@ class Category(models.Model):
     def __str__(self):
         return self.name
 
-class Images(models.Model):
-    name = models.CharField(max_length=255)
-
-
+# Configuration Model
 class Configuration(models.Model):
     start_num = models.IntegerField(default=0)
     end_num = models.IntegerField()
@@ -108,17 +106,30 @@ class Configuration(models.Model):
             raise ValidationError('Start number cannot be greater than end number.')
 
     def update_start_num(self, quantity):
-        if quantity <= self.end_num:
+        if self.start_num+quantity <= self.end_num:
             self.start_num += quantity
             self.save()
         else:
             raise ValidationError('Quantity must be within the configuration range.')
 
+class Images(models.Model):
+    barcode = models.ForeignKey('Barcode', on_delete=models.CASCADE)
+    image_path = models.ImageField(upload_to='barcodes/')
+
+    def __str__(self):
+        return f"{self.barcode} ({self.image_path})"
+    
+@receiver(post_delete, sender= Images )
+def delete_barcode_image(sender, instance, **kwargs):
+    if instance.image_path:
+        if os.path.isfile(instance.image_path.path):
+            os.remove(instance.image_path.path)
+
 
 class Barcode(models.Model):
-    category = models.ForeignKey(Category, on_delete=models.CASCADE, blank=False)
+    category = models.ForeignKey('Category', on_delete=models.CASCADE)
     quantity = models.IntegerField()
-    configuration = models.ForeignKey(Configuration, on_delete=models.CASCADE)
+    configuration = models.ForeignKey('Configuration', on_delete=models.CASCADE)
 
     @property
     def start_num(self):
@@ -131,62 +142,57 @@ class Barcode(models.Model):
     def clean(self):
         if not self.configuration:
             raise ValidationError('No configuration selected.')
-        
-        if self.quantity < 0:
-            raise ValidationError('Quantity cannot be negative.')
 
         if self.quantity <= 0:
             raise ValidationError('Quantity must be greater than zero.')
 
-        # Check if the quantity is valid within the configuration range
-        if not (self.quantity <= self.configuration.end_num):
+        if self.quantity > self.configuration.end_num:
             raise ValidationError('Quantity must be within the range defined by the configuration.')
 
     def generate_barcodes(self):
         barcodes = []
         start_num = self.configuration.start_num
         end_num = self.configuration.end_num
-        
+
         for i in range(self.quantity):
             num = start_num + i
             if num > end_num:
-                break  # Skip invalid barcode values
+                break
             code = f'{self.category.code}-{num}'
             barcodes.append(code)
             self.save_barcode_image(code)
         return barcodes
 
     def save_barcode_image(self, code):
-        # Set the path to save the barcode image
         output_dir = os.path.join(settings.MEDIA_ROOT, 'barcodes')
         os.makedirs(output_dir, exist_ok=True)
-        file_path = os.path.join(output_dir, f'{code}.png')
+        file_name = f'{code}.png'
+        file_path = os.path.join(output_dir, file_name)
 
-        # Generate the barcode image in Code128 format
         barcode = Code128(code, writer=ImageWriter())
-        image = barcode.render()  # Generate the barcode image
+        image = barcode.render()
 
-        # Resize the image
-        image = image.resize((int(2 * 96), int(1 * 96)), Image.Resampling.LANCZOS)  # 1 inch x 2 inches at 96 DPI
+        image = image.resize((int(2 * 96), int(1 * 96)), Image.Resampling.LANCZOS)
         image.save(file_path)
 
+        # Save only the relative path to the Images model
+        image_instance = Images(barcode=self, image_path=os.path.join('barcodes', file_name))
+        image_instance.save()
+
+
     def save(self, *args, **kwargs):
-        # Check if the quantity is valid and update the configuration if needed
-        if not self.configuration:
+        self.clean()  # Validate model instance
+        super().save(*args, **kwargs)  # Save the Barcode instance
+        # Ensure the configuration is available before saving
+        config = Configuration.objects.first()
+        if not config:
             raise ValueError('No configuration found.')
 
-        start_num = self.configuration.start_num
-        end_num = self.configuration.end_num
-        
-        # Generate and save barcodes as images before saving the instance
-        if self.quantity <= end_num:
-            self.configuration.update_start_num(self.quantity)
-        else:
-            raise ValueError('Quantity exceeds the allowable range in the configuration.')
-
+        # Update configuration if necessary
+        if self.quantity <= config.end_num:
+            config.update_start_num(self.quantity)
+        # Generate barcodes and save images
         self.generate_barcodes()
-        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.category} ({self.quantity})"
-
