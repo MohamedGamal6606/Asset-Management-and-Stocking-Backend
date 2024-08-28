@@ -10,6 +10,7 @@ from PIL import Image
 import os
 from django.conf import settings
 from django.db.models.signals import post_delete
+from solo.models import SingletonModel
 class Country(models.Model):
     
     name = models.CharField(max_length=255)
@@ -93,9 +94,9 @@ class Category(models.Model):
         return self.name
 
 # Configuration Model
-class Configuration(models.Model):
+class Configuration(SingletonModel):  # Inherit from SingletonModel
     start_num = models.IntegerField(default=0)
-    end_num = models.IntegerField()
+    end_num = models.IntegerField(default=1)
 
     def clean(self):
         if self.start_num < 0:
@@ -103,14 +104,18 @@ class Configuration(models.Model):
         if self.end_num < 0:
             raise ValidationError('End number cannot be negative.')
         if self.start_num >= self.end_num:
-            raise ValidationError('Start number cannot be greater than end number.')
+            raise ValidationError('Start number cannot be greater than or equal to the end number.')
 
     def update_start_num(self, quantity):
-        if self.start_num+quantity <= self.end_num:
+        if self.start_num + quantity <= self.end_num:
             self.start_num += quantity
             self.save()
         else:
             raise ValidationError('Quantity must be within the configuration range.')
+
+    def __str__(self):
+        return f"Configuration (Start: {self.start_num}, End: {self.end_num})"
+    
 
 class Images(models.Model):
     barcode = models.ForeignKey('Barcode', on_delete=models.CASCADE)

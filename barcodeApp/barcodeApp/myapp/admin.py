@@ -23,6 +23,7 @@ import os
 from django.conf import settings
 from django.urls import path, reverse
 from django.utils.html import format_html
+from solo.admin import SingletonModelAdmin 
 
 # Define resources for each model
 class CountryResource(resources.ModelResource):
@@ -249,7 +250,7 @@ admin.site.register(Category, CategoryAdmin)
 # Admin for Barcode model
 class BarcodeAdmin(ImportExportModelAdmin):
     resource_class = BarcodeResource
-    list_display = ('category', 'quantity', 'view_barcodes_button')
+    list_display = ('category', 'quantity', 'print_barcodes_button')
     ordering = ('id',)
     search_fields = ('category__name', 'quantity')
     raw_id_fields = ("category",)
@@ -260,23 +261,25 @@ class BarcodeAdmin(ImportExportModelAdmin):
             return ('category', 'quantity')
         return ()
 
-    def view_barcodes_button(self, obj):
-        return format_html('<a class="button" href="{}">View Barcodes</a>',
-                           reverse('admin:view_barcodes', args=[obj.pk]))
-    view_barcodes_button.short_description = 'View Barcodes'
+    def print_barcodes_button(self, obj):
+        return format_html(
+            '<a class="button" href="{}" target="_blank">Print Barcodes</a>',
+            reverse('admin:print_barcodes', args=[obj.pk])
+        )
+    print_barcodes_button.short_description = 'Print Barcodes'
 
     def get_urls(self):
         urls = super().get_urls()
         custom_urls = [
-            path('view-barcodes/<int:barcode_id>/', self.admin_site.admin_view(self.view_barcodes), name='view_barcodes'),
+            path('print-barcodes/<int:barcode_id>/', self.admin_site.admin_view(self.print_barcodes), name='print_barcodes'),
         ]
         return custom_urls + urls
 
-    def view_barcodes(self, request, barcode_id):
+    def print_barcodes(self, request, barcode_id):
         barcode = Barcode.objects.get(id=barcode_id)
         images = barcode.images_set.all()  # Retrieve related images
 
-        # Create HTML response to display barcodes
+        # Create a print-only HTML response
         html = '''
         <html>
         <head>
@@ -295,21 +298,24 @@ class BarcodeAdmin(ImportExportModelAdmin):
                     }
                 }
             </style>
+            <script>
+                window.onload = function() {
+                    window.print();
+                }
+            </script>
         </head>
         <body>
-            <div class="print-only">
         '''
         for image in images:
             image_url = f'{settings.MEDIA_URL}{image.image_path}'
-            html += f'<img src="{image_url}" alt="{image.code}" />'
+            html += f'<img src="{image_url}" alt="Barcode Image" />'
         html += '''
-            </div>
         </body>
         </html>
         '''
 
         return HttpResponse(html)
-
+    
 class ImagesAdmin(admin.ModelAdmin):
     list_display = ('barcode', 'image_path')  # Adjust based on actual fields
     search_fields = ('barcode__category__name', 'image_path')
@@ -318,9 +324,7 @@ admin.site.register(Barcode, BarcodeAdmin)
 admin.site.register(Images, ImagesAdmin)
 
 
-class ConfigurationAdmin(ImportExportModelAdmin):
-    class Meta:
-        model = Configuration
-        fields = '__all__'
+@admin.register(Configuration)
+class ConfigurationAdmin(SingletonModelAdmin):
+    pass
 
-admin.site.register(Configuration, ConfigurationAdmin)
