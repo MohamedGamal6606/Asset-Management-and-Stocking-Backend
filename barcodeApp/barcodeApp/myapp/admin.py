@@ -1,3 +1,4 @@
+from django.shortcuts import get_object_or_404
 from .models import (
     Configuration,
     Country, 
@@ -257,7 +258,7 @@ class BarcodeAdmin(ImportExportModelAdmin):
     actions = [export_as_excel, 'print_barcodes']
 
     def get_readonly_fields(self, request, obj=None):
-        if obj:  
+        if obj:
             return ('category', 'quantity')
         return ()
 
@@ -276,45 +277,55 @@ class BarcodeAdmin(ImportExportModelAdmin):
         return custom_urls + urls
 
     def print_barcodes(self, request, barcode_id):
-        barcode = Barcode.objects.get(id=barcode_id)
+        barcode = get_object_or_404(Barcode, id=barcode_id)
         images = barcode.images_set.all()  # Retrieve related images
 
-        # Create a print-only HTML response
-        html = '''
-        <html>
-        <head>
-            <style>
-                @media print {
-                    body {
-                        margin: 0;
-                        padding: 0;
-                    }
-                    img {
-                        display: block;
-                        width: auto;
-                        height: auto;
-                        margin: 0;
-                        page-break-inside: avoid;
-                    }
-                }
-            </style>
-            <script>
-                window.onload = function() {
-                    window.print();
-                }
-            </script>
-        </head>
-        <body>
-        '''
-        for image in images:
-            image_url = f'{settings.MEDIA_URL}{image.image_path}'
-            html += f'<img src="{image_url}" alt="Barcode Image" />'
-        html += '''
-        </body>
-        </html>
+        # Generate the image tags
+        image_tags = ''.join(
+            f'<div class="barcode-container"><img src="{settings.MEDIA_URL}{image.image_path}" /></div>'
+            for image in images
+        )
+
+        # CSS to enforce 2x1 inch size and ensure each image is on its own page
+        css = '''
+        <style>
+        @page {
+            size: 2in 1in;  /* Set page size to 2x1 inches */
+            margin: 0;      /* Remove page margin */
+        }
+        body {
+            margin: 0;      /* Remove body margin */
+            padding: 0;     /* Remove body padding */
+            width: 2in;     /* Set body width to match page size */
+            height: 1in;    /* Set body height to match page size */
+        }
+        .barcode-container {
+            width: 2in; 
+            height: 1in; 
+            display: flex;
+            justify-content: center; 
+            align-items: center;
+            page-break-after: always; /* Ensure each image starts on a new page */
+        }
+        .barcode-container img {
+            width: 100%; 
+            height: 100%; 
+            object-fit: contain; /* Ensure the image covers the container */
+        }
+        </style>
         '''
 
-        return HttpResponse(html)
+        # JavaScript to trigger printing
+        script = '''
+        <script>
+        window.onload = function() {
+            window.print();
+        };
+        </script>
+        '''
+
+        # Return the CSS, images, and script
+        return HttpResponse(css + image_tags + script)
     
 class ImagesAdmin(admin.ModelAdmin):
     list_display = ('barcode', 'image_path')  # Adjust based on actual fields

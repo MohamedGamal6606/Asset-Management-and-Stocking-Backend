@@ -1,0 +1,11 @@
+{
+    "sqltools.connections": [
+        {
+            "previewLimit": 50,
+            "driver": "SQLite",
+            "database": "${workspaceFolder:Django}/barcodeApp/barcodeApp/db.sqlite3",
+            "name": "barcode app"
+        }
+    ],
+    "sqltools.useNodeRuntime": true
+}

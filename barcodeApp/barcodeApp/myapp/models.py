@@ -6,11 +6,14 @@ from django.forms import ValidationError
 from django.utils import timezone
 from barcode import Code128
 from barcode.writer import ImageWriter
-from PIL import Image
 import os
 from django.conf import settings
 from django.db.models.signals import post_delete
 from solo.models import SingletonModel
+from PIL import Image, ImageDraw, ImageFont
+from bidi.algorithm import get_display
+import arabic_reshaper
+
 class Country(models.Model):
     
     name = models.CharField(max_length=255)
@@ -134,30 +137,26 @@ def delete_barcode_image(sender, instance, **kwargs):
 class Barcode(models.Model):
     category = models.ForeignKey('Category', on_delete=models.CASCADE)
     quantity = models.IntegerField()
-    configuration = models.ForeignKey('Configuration', on_delete=models.CASCADE)
 
     @property
     def start_num(self):
-        return self.configuration.start_num if self.configuration else 'N/A'
+        return Configuration.get_solo().start_num
 
     @property
     def end_num(self):
-        return self.configuration.end_num if self.configuration else 'N/A'
+        return Configuration.get_solo().end_num
 
     def clean(self):
-        if not self.configuration:
-            raise ValidationError('No configuration selected.')
-
         if self.quantity <= 0:
             raise ValidationError('Quantity must be greater than zero.')
 
-        if self.quantity > self.configuration.end_num:
+        if self.quantity > self.end_num:
             raise ValidationError('Quantity must be within the range defined by the configuration.')
 
     def generate_barcodes(self):
         barcodes = []
-        start_num = self.configuration.start_num
-        end_num = self.configuration.end_num
+        start_num = self.start_num
+        end_num = self.end_num
 
         for i in range(self.quantity):
             num = start_num + i
@@ -169,33 +168,75 @@ class Barcode(models.Model):
         return barcodes
 
     def save_barcode_image(self, code):
+        # Define output directory and file path
         output_dir = os.path.join(settings.MEDIA_ROOT, 'barcodes')
         os.makedirs(output_dir, exist_ok=True)
         file_name = f'{code}.png'
         file_path = os.path.join(output_dir, file_name)
 
+        # Generate the barcode image
         barcode = Code128(code, writer=ImageWriter())
-        image = barcode.render()
+        barcode_image = barcode.render()
 
-        image = image.resize((int(2 * 96), int(1 * 96)), Image.Resampling.LANCZOS)
-        image.save(file_path)
+        # Resize barcode to fit within 2x1 inches (192x96 pixels at 96 DPI)
+        barcode_image = barcode_image.resize((600,295))
+
+        # Create a blank image of size 2x1 inches
+        final_image = Image.new('RGB', (600,295), 'white')
+
+        # Add the barcode to the blank image
+        final_image.paste(barcode_image, (0, int(0.2 * 96)))  # Paste barcode slightly lower
+
+        # Add text above the barcode
+        # Add text above the barcode
+        draw = ImageDraw.Draw(final_image)
+
+        # Reverse and reshape the Arabic part of the text
+        english_text = self.category.name
+        arabic_text = arabic_reshaper.reshape(self.category.name_ar)
+        bidi_text = get_display(arabic_text)
+
+        # Combine the English and reshaped Arabic text
+        text = f'{english_text} - {bidi_text}'
+        font_size = 20  # Adjust font size as needed
+
+        try:
+            font = ImageFont.truetype("arial.ttf", font_size)  # Use a TrueType font
+        except IOError:
+            font = ImageFont.load_default()  # Fallback to default font if TrueType font is not found
+
+        # Calculate text size using the bounding box
+        text_bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        
+        # Calculate the position to center the text
+        text_x = (final_image.width - text_width) // 2  # Center the text horizontally
+        text_y = (int(0.2 * 96) - text_height) // 2    # Place text above the barcode
+        
+        # Draw the text onto the image
+        draw.text((text_x, text_y), text, fill="black", font=font)
+
+        # Save the final image
+        final_image.save(file_path)
 
         # Save only the relative path to the Images model
         image_instance = Images(barcode=self, image_path=os.path.join('barcodes', file_name))
         image_instance.save()
 
-
     def save(self, *args, **kwargs):
         self.clean()  # Validate model instance
         super().save(*args, **kwargs)  # Save the Barcode instance
+
         # Ensure the configuration is available before saving
-        config = Configuration.objects.first()
+        config = Configuration.get_solo()
         if not config:
             raise ValueError('No configuration found.')
 
         # Update configuration if necessary
         if self.quantity <= config.end_num:
             config.update_start_num(self.quantity)
+        
         # Generate barcodes and save images
         self.generate_barcodes()
 
