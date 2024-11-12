@@ -61,6 +61,7 @@ class AssetResource(resources.ModelResource):
     class Meta:
         model = Asset
         fields = ('id', 'assetTag', 'office', 'assetCount', 'created_on', 'updated_on')
+        
 
 # Custom export to Excel
 def export_as_excel(modeladmin, request, queryset):
